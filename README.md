@@ -1,5 +1,7 @@
 # shellcage
 
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/draarivpatel-ui/shellcage/badge)](https://scorecard.dev/viewer/?uri=github.com/draarivpatel-ui/shellcage)
+
 Zero-dependency command injection, argument injection and environment hijack defense for Node.js child processes.
 
 `shellcage` is a small, auditable security library for applications that must execute local programs without turning attacker controlled input into a shell command. It is designed for MCP servers, automation workers, CI helpers, backend job runners and desktop agents that use `child_process` but must enforce a strict boundary around executable selection, argv construction, environment inheritance, working-directory containment, timeouts and output size.

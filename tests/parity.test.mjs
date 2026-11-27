@@ -138,9 +138,9 @@ test('package dependencies and devDependencies are empty', () => {
   assert.deepEqual(pkg.devDependencies, {});
 });
 
-test('package test script uses the explicit Windows-safe glob', () => {
+test('package test script uses the explicit Windows-safe test runner', () => {
   const pkg = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
-  assert.equal(pkg.scripts.test, 'node --test tests/*.test.mjs');
+  assert.equal(pkg.scripts.test, 'node scripts/run-tests.mjs');
 });
 
 test('package engines require Node 18 or newer', () => {

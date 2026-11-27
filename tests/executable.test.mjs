@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 import { validateInvocation, auditArgv, CODES } from '../src/index.mjs';
-import { toolPath, codesFromReport, codesFromFindings, hasCode } from './helpers.mjs';
+import { toolPath, codesFromReport, codesFromFindings, hasCode, makeTempDir } from './helpers.mjs';
 
 function validate(command, args = [], options = {}) {
   return validateInvocation(command, args, { allowExecutables: ['git', 'tool', 'node', process.execPath, toolPath('tool')], ...options });
@@ -368,4 +370,74 @@ test('auditArgv does not invent an allowlist failure for a shell binary', () => 
   const codes = codesFromFindings(auditArgv('sh', []));
   assert.ok(codes.includes(CODES.SHELL_BINARY));
   assert.equal(codes.includes(CODES.EXECUTABLE_NOT_ALLOWLISTED), false);
+});
+
+for (const [command, expected] of [
+  ['cmd.exe.', CODES.SHELL_BINARY],
+  ['CMD.EXE.', CODES.SHELL_BINARY],
+  ['job.bat.', CODES.BATCH_EXTENSION],
+  ['JOB.BAT.', CODES.BATCH_EXTENSION],
+  ['cmd.exe:stream', CODES.SHELL_BINARY],
+  ['job.bat:stream', CODES.BATCH_EXTENSION]
+]) {
+  test('Windows executable spelling confusion is blocked: ' + command, () => {
+    const report = validateInvocation(command, [], { allowExecutables: [command] });
+    assert.equal(report.ok, false);
+    const codes = codesFromReport(report);
+    assert.ok(codes.includes(expected), JSON.stringify(codes));
+  });
+}
+
+for (const command of ['cmd.exe.', 'job.bat.']) {
+  test('trailing-dot executable basename receives a syntax finding: ' + command, () => {
+    assert.ok(hasCode(auditArgv(command, []), CODES.EXECUTABLE_TRAILING_DOT));
+  });
+}
+
+for (const command of ['cmd.exe:stream', 'job.bat:stream']) {
+  test('NTFS alternate stream executable basename receives a syntax finding: ' + command, () => {
+    assert.ok(hasCode(auditArgv(command, []), CODES.EXECUTABLE_NTFS_STREAM));
+  });
+}
+
+test('UNC shell executable path is blocked by basename policy', () => {
+  const command = '\\\\server\\share\\cmd.exe';
+  const report = validateInvocation(command, [], { allowExecutables: [command] });
+  assert.ok(codesFromReport(report).includes(CODES.SHELL_BINARY));
+});
+
+for (const entry of ['tool.', 'tool:stream']) {
+  test('allowlist rejects Windows-confusable executable spelling: ' + entry, () => {
+    const report = validateInvocation('tool', [], { allowExecutables: [entry] });
+    assert.ok(codesFromReport(report).includes(CODES.EXECUTABLE_ALLOWLIST_INVALID));
+  });
+}
+
+test('resolved shell symlink target is blocked even when the symlink itself is allowlisted', (t) => {
+  const directory = makeTempDir(t);
+  const target = process.platform === 'win32' ? 'C:\\Windows\\System32\\cmd.exe' : '/bin/sh';
+  if (!fs.existsSync(target)) t.skip('shell fixture target is unavailable');
+  const link = path.join(directory, process.platform === 'win32' ? 'tool.exe' : 'tool');
+  try {
+    fs.symlinkSync(target, link, 'file');
+  } catch {
+    t.skip('file symlinks are unavailable');
+    return;
+  }
+  const report = validateInvocation(link, ['-c', 'synthetic'], { allowExecutables: [link] });
+  assert.equal(report.ok, false);
+  assert.ok(codesFromReport(report).includes(CODES.SHELL_BINARY), JSON.stringify(report.findings));
+});
+
+test('Object.prototype invocation options cannot satisfy or weaken policy', () => {
+  Object.prototype.allowExecutables = ['node'];
+  Object.prototype.allowDangerousFlags = true;
+  try {
+    const report = validateInvocation('node', ['-e', 'synthetic'], {});
+    assert.equal(report.ok, false);
+    assert.ok(codesFromReport(report).includes(CODES.EXECUTABLE_ALLOWLIST_REQUIRED));
+  } finally {
+    delete Object.prototype.allowExecutables;
+    delete Object.prototype.allowDangerousFlags;
+  }
 });

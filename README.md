@@ -6,13 +6,13 @@ Zero-dependency command injection, argument injection and environment hijack def
 
 - **Zero dependencies.** Only Node.js core modules are used.
 - **No shell execution.** String command lines are rejected, `shell: false` is forced, and `windowsVerbatimArguments` is forbidden.
-- **Explicit executable allowlist.** Commands are matched by basename or resolved absolute path. Shell interpreters and Windows batch or script extensions are blocked by default.
+- **Explicit executable allowlist.** Commands are matched by basename or resolved absolute path. Shell interpreters and Windows batch or script extensions are blocked by default, including trailing-dot and NTFS alternate-data-stream spellings. Resolved absolute-path symlink targets are checked as well as the invoked basename.
 - **CWE-88 positional argument defense.** Typed argv builder slots place untrusted values after `--` or validate them as non-flag positionals.
 - **Environment scrubbing.** A minimal allowlist is combined with a hard denylist for dynamic linker, runtime, shell and Git hijack variables.
 - **Bounded execution.** Timeouts, stdin byte limits and streaming stdout and stderr byte caps are enforced without unbounded buffering.
 - **Dual module.** Native ESM and generated CommonJS entry points plus hand-authored TypeScript declarations.
 
-**Tests:** 731 passing with `npm test` (Node 18+).
+**Tests:** 799 passing with `npm test` (Node 18+).
 
 ## Release status
 
@@ -214,7 +214,7 @@ Security and configuration failures are represented as findings rather than thro
 
 ### `auditArgv(command, args?, options?)`
 
-Returns structured static findings for an argv array without requiring an allowlist. It detects high-risk flags and gadgets for tools including `git`, `tar`, `find`, `curl`, `ssh`, `scp`, `sftp`, `rsync`, `node`, Python runtimes, shell interpreters, `env` and `xargs`.
+Returns structured static findings for an argv array without requiring an allowlist. It detects high-risk flags and gadgets for tools including `git`, `tar`, `find`, `curl`, `ssh`, `scp`, `sftp`, `rsync`, `node`, Python runtimes, shell interpreters, `env` and `xargs`. Detection is conservative about documented abbreviated forms for PowerShell, Git and GNU tar. It also treats `--` as tool-specific rather than universal: `find` predicates, `cmd` command switches and PowerShell execution switches remain active findings after that token.
 
 Unlike execution validation, auditing reports dangerous flags even when `allowDangerousFlags` is set. The audit is a detector and inventory tool, not a permission decision.
 
@@ -291,10 +291,13 @@ The hard denylist includes, at minimum:
 - Node runtime variables such as `NODE_OPTIONS`, `NODE_EXTRA_CA_CERTS` and `NODE_PATH`
 - Python, Ruby, Perl and Java runtime injection variables
 - shell startup and expansion variables such as `BASH_ENV`, `ENV`, `IFS`, `SHELLOPTS`, `PS4`, `PROMPT_COMMAND` and exported Bash function names
-- Git command and configuration variables such as `GIT_SSH`, `GIT_SSH_COMMAND`, `GIT_EXEC_PATH`, `GIT_CONFIG_PARAMETERS`, `GIT_CONFIG_COUNT`, `GIT_EXT_TRANSPORT` and numbered Git config key or value variables
+- Git command and configuration variables such as `GIT_SSH`, `GIT_SSH_COMMAND`, `GIT_EXEC_PATH`, `GIT_CONFIG_PARAMETERS`, `GIT_CONFIG_COUNT`, `GIT_CONFIG_GLOBAL`, `GIT_CONFIG_SYSTEM`, `GIT_EXT_TRANSPORT`, editor, askpass, proxy, repository-location and template variables, and numbered Git config key or value variables
+- runtime and secret-exposure variables such as `NODE_REPL_EXTERNAL_MODULE`, `PYTHONUSERBASE`, `PYTHONBREAKPOINT`, `SSLKEYLOGFILE` and `DOTNET_STARTUP_HOOKS`
 - helper command variables such as `EDITOR`, `VISUAL`, `PAGER`, `COMSPEC` and `PATHEXT`
 
 Denylist entries win even when a caller explicitly puts the same name in `allowEnv`.
+
+`HTTP_PROXY` and `HTTPS_PROXY` are not hard-denylisted because legitimate enterprise environments sometimes require them. They are still stripped unless explicitly allowlisted. Treat explicit proxy forwarding as a network-confusion and credential-exposure risk acceptance, especially for lowercase proxy variants consumed by some tools.
 
 ### `auditEnv(source?, options?)`
 
@@ -329,7 +332,7 @@ Important defaults and limits:
 | `maxStderrBytes` | `1048576` | `67108864` |
 | `maxStdinBytes` | `1048576` | `67108864` |
 
-Stdout and stderr caps are streaming caps. If a child exceeds a cap, shellcage stores only bytes up to the cap, marks the matching truncation flag and terminates the child. It does not buffer unbounded output before discovering the excess.
+Stdout and stderr caps are streaming caps. If a child exceeds a cap, shellcage stores only bytes up to the cap, marks the matching truncation flag and terminates the child. It does not buffer unbounded output before discovering the excess. When truncation splits a multibyte UTF-8 character, the incomplete trailing bytes are omitted rather than returned as a replacement character.
 
 `timeoutMs` uses `SIGTERM` by default and escalates to `SIGKILL` after a short grace period. `killSignal` may be one of `SIGTERM`, `SIGKILL`, `SIGINT`, `SIGHUP` or `SIGQUIT`.
 
@@ -380,7 +383,7 @@ The environment audit prints keys and finding metadata only. It never prints env
 - The static audit is not a complete parser for every CLI. Long-option abbreviation, shell quoting rules, tool-specific end-of-options behavior and nested command languages are outside its scope.
 - `allowDangerousFlags: true`, `allowShellBinary: true` and `allowBatchExtensions: true` are explicit risk acceptances. Combining them can recreate the exact injection boundary this library exists to remove.
 - `safePathArg` does not authorize file access. Use application-level path policy, canonicalization and least-privilege filesystem permissions.
-- Realpath checks reduce symlink escape risk at validation time but cannot eliminate every filesystem time-of-check to time-of-use race.
+- Realpath checks reduce symlink escape risk at validation time but cannot eliminate every filesystem time-of-check to time-of-use race. Hard links cannot expose a single canonical target name, so executable content policy still depends on the integrity of allowlisted paths.
 - Environment scrubbing cannot know every future runtime variable. The primary defense is the explicit allowlist, not the denylist.
 - `safeSpawn` does not enforce stdout or stderr byte caps because the caller owns those streams.
 - The library cannot make a deliberately invoked shell safe. Do not pass shell text to it.

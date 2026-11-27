@@ -331,3 +331,31 @@ test('auditEnv key is present for dangerous variable but value is absent', () =>
   assert.equal(findings[0].key, 'LD_PRELOAD');
   assert.equal(Object.prototype.hasOwnProperty.call(findings[0], 'value'), false);
 });
+
+for (const name of [
+  'PYTHONUSERBASE', 'PYTHONBREAKPOINT', 'NODE_REPL_EXTERNAL_MODULE', 'SSLKEYLOGFILE',
+  'GIT_EDITOR', 'GIT_SEQUENCE_EDITOR', 'GIT_ASKPASS', 'SSH_ASKPASS', 'GIT_PROXY_COMMAND',
+  'GIT_DIR', 'GIT_WORK_TREE', 'GIT_TEMPLATE_DIR', 'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_SYSTEM',
+  'DOTNET_STARTUP_HOOKS'
+]) {
+  test('hard denylist blocks additional hijack variable ' + name, () => {
+    const env = sanitizeEnv({ [name]: 'payload' }, { allowEnv: [name] });
+    assert.deepEqual({ ...env }, {});
+    assert.ok(hasCode(auditEnv({ [name]: 'payload' }), CODES.ENV_INJECTION));
+  });
+}
+
+test('Object.prototype environment options cannot expand the allowlist', () => {
+  Object.prototype.allowEnv = ['CUSTOM'];
+  try {
+    assert.deepEqual({ ...sanitizeEnv({ CUSTOM: 'x' }, {}) }, {});
+  } finally {
+    delete Object.prototype.allowEnv;
+  }
+});
+
+test('sanitizeEnv ignores inherited source keys', () => {
+  const source = Object.create({ CUSTOM: 'inherited' });
+  source.PATH = '/bin';
+  assert.deepEqual({ ...sanitizeEnv(source) }, { PATH: '/bin' });
+});

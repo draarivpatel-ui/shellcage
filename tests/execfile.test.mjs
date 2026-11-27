@@ -416,3 +416,33 @@ test('validateInvocation reports Buffer argv input instead of crashing while fre
   assert.equal(report.ok, false);
   assert.equal(report.findings.some((finding) => finding.code === CODES.ARG_TYPE), true);
 });
+
+test('safeSpawn timeout escalates when the child ignores the initial signal', async () => {
+  const child = safeSpawn(process.execPath, ['-e', 'process.on("SIGTERM",()=>{});setTimeout(()=>{},10000)'], {
+    ...evalOptions,
+    timeoutMs: 80,
+    killSignal: 'SIGTERM'
+  });
+  const start = Date.now();
+  await once(child, 'close');
+  assert.ok(Date.now() - start < 3000);
+});
+
+test('safeExecFile truncation does not emit a partial UTF-8 character', async () => {
+  const script = 'process.stdout.write("x".repeat(99)+"é");setTimeout(()=>{},10000)';
+  const result = await safeExecFile(process.execPath, ['-e', script], {
+    ...evalOptions,
+    timeoutMs: 5000,
+    maxStdoutBytes: 100
+  });
+  assert.equal(result.truncatedStdout, true);
+  assert.equal(result.stdout, 'x'.repeat(99));
+  assert.equal(Buffer.byteLength(result.stdout, 'utf8'), 99);
+  assert.equal(result.stdout.includes('\ufffd'), false);
+});
+
+test('safeExecFile joins multibyte UTF-8 split across chunks without corruption', async () => {
+  const script = 'const b=Buffer.from("é","utf8");process.stdout.write(b.subarray(0,1));setImmediate(()=>process.stdout.write(b.subarray(1)))';
+  const result = await safeExecFile(process.execPath, ['-e', script], evalOptions);
+  assert.equal(result.stdout, 'é');
+});

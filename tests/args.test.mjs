@@ -321,3 +321,12 @@ test('buildArgv rejects non-boolean allowLeadingDashValue', () => {
 test('buildArgv rejects non-boolean positional allowEmpty', () => {
   assertCode(() => buildArgv([{ type: 'positional', value: '', allowEmpty: 'no' }]), CODES.ARGV_SPEC_INVALID);
 });
+
+test('Object.prototype cannot supply an argv slot type', () => {
+  Object.prototype.type = 'literal';
+  try {
+    assertCode(() => buildArgv([{ value: 'x' }]), CODES.ARGV_SPEC_INVALID);
+  } finally {
+    delete Object.prototype.type;
+  }
+});

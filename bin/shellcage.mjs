@@ -18,15 +18,35 @@ function usage() {
   ].join('\n');
 }
 
+function neutralizeTerminalText(text) {
+  return String(text).replace(/[\x00-\x1F\x7F-\x9F\u200E\u200F\u202A-\u202E\u2066-\u2069]/g, (character) => {
+    return '\\u' + character.codePointAt(0).toString(16).padStart(4, '0');
+  });
+}
+
+function writeStdoutLine(line) {
+  process.stdout.write(neutralizeTerminalText(line) + '\n');
+}
+
+function neutralizeJsonText(text) {
+  return String(text).replace(/[\u200E\u200F\u202A-\u202E\u2066-\u2069]/g, (character) => {
+    return '\\u' + character.codePointAt(0).toString(16).padStart(4, '0');
+  });
+}
+
 function printJson(payload) {
-  process.stdout.write(JSON.stringify(payload, null, 2) + '\n');
+  process.stdout.write(neutralizeJsonText(JSON.stringify(payload, null, 2)) + '\n');
+}
+
+function quotedTerminalValue(value) {
+  return neutralizeTerminalText(JSON.stringify(value));
 }
 
 function findingLine(item) {
   const parts = [item.severity, item.code];
   if (typeof item.index === 'number') parts.push('index=' + item.index);
-  if (typeof item.flag === 'string') parts.push('flag=' + JSON.stringify(item.flag));
-  if (typeof item.key === 'string') parts.push('key=' + JSON.stringify(item.key));
+  if (typeof item.flag === 'string') parts.push('flag=' + quotedTerminalValue(item.flag));
+  if (typeof item.key === 'string') parts.push('key=' + quotedTerminalValue(item.key));
   parts.push(item.message);
   return parts.join(' ');
 }
@@ -63,24 +83,30 @@ function runAudit(args) {
   if (parsed.json) {
     printJson({ mode: 'audit', ok, findings });
   } else if (ok) {
-    process.stdout.write('shellcage audit: clean\n');
+    writeStdoutLine('shellcage audit: clean');
   } else {
-    process.stdout.write('shellcage audit: risky findings for ' + JSON.stringify(parsed.command) + '\n');
-    for (const item of findings) process.stdout.write(findingLine(item) + '\n');
+    writeStdoutLine('shellcage audit: risky findings for ' + quotedTerminalValue(parsed.command));
+    for (const item of findings) writeStdoutLine(findingLine(item));
   }
   process.exitCode = ok ? 0 : 1;
 }
 
 function loadEnvJson(pathname) {
-  const stat = fs.statSync(pathname);
-  if (!stat.isFile() || stat.size > MAX_ENV_FILE_BYTES) {
-    throw new Error('environment JSON input is missing or too large');
+  let fd;
+  try {
+    fd = fs.openSync(pathname, fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK || 0));
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile() || stat.size > MAX_ENV_FILE_BYTES) {
+      throw new Error('environment JSON input is missing or too large');
+    }
+    const parsed = JSON.parse(fs.readFileSync(fd, 'utf8'));
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('environment JSON input must be an object');
+    }
+    return parsed;
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
   }
-  const parsed = JSON.parse(fs.readFileSync(pathname, 'utf8'));
-  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error('environment JSON input must be an object');
-  }
-  return parsed;
 }
 
 function parseAuditEnvArgs(args) {
@@ -122,10 +148,10 @@ function runAuditEnv(args) {
   if (parsed.json) {
     printJson({ mode: 'audit-env', ok, findings });
   } else if (ok) {
-    process.stdout.write('shellcage audit-env: clean\n');
+    writeStdoutLine('shellcage audit-env: clean');
   } else {
-    process.stdout.write('shellcage audit-env: risky findings\n');
-    for (const item of findings) process.stdout.write(findingLine(item) + '\n');
+    writeStdoutLine('shellcage audit-env: risky findings');
+    for (const item of findings) writeStdoutLine(findingLine(item));
   }
   process.exitCode = ok ? 0 : 1;
 }
@@ -133,11 +159,11 @@ function runAuditEnv(args) {
 function main(argv) {
   const command = argv[0];
   if (command === '--help' || command === '-h') {
-    process.stdout.write(usage() + '\n');
+    writeStdoutLine(usage());
     return;
   }
   if (command === '--version' || command === '-v') {
-    process.stdout.write('shellcage ' + SHELLCAGE_VERSION + '\n');
+    writeStdoutLine('shellcage ' + SHELLCAGE_VERSION);
     return;
   }
   if (command === 'audit') {

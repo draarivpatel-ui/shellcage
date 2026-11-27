@@ -299,3 +299,72 @@ for (const [command, args] of [
     assertNoDanger(command, args);
   });
 }
+
+for (const args of [
+  ['clone', '--config=core.sshCommand=synthetic'],
+  ['clone', '--upload=synthetic'],
+  ['--git-dir', 'repo', 'status'],
+  ['--work-tree', 'tree', 'status'],
+  ['-C', 'repo', 'status'],
+  ['clone', '--template=template', 'repo']
+]) {
+  test('git audit detects additional repository or execution control ' + args[Math.min(1, args.length - 1)], () => {
+    assertDanger('git', args);
+  });
+}
+
+test('git audit does not flag an ordinary safe long option sharing no dangerous prefix', () => {
+  assertNoDanger('git', ['clone', '--depth', '1', 'https://example.invalid/repo.git']);
+});
+
+for (const args of [
+  ['--checkpoint-a=exec=synthetic', '-xf', 'archive.tar'],
+  ['--use-compress-p=synthetic', '-xf', 'archive.tar'],
+  ['--rmt-c=synthetic', '-xf', 'archive.tar'],
+  ['--new-volume-s=synthetic', '-xf', 'archive.tar']
+]) {
+  test('tar audit detects unambiguous long-option abbreviation ' + args[0], () => {
+    assertDanger('tar', args);
+  });
+}
+
+test('tar audit does not flag the exact benign checkpoint option', () => {
+  assertNoDanger('tar', ['--checkpoint', '-xf', 'archive.tar']);
+});
+
+for (const flag of ['-comm', '-commandw', '-enc', '\u2013command', '\u2014encodedcommand', '/command']) {
+  test('powershell audit detects abbreviated unicode or slash execution flag ' + JSON.stringify(flag), () => {
+    assertDanger('pwsh', [flag, 'synthetic']);
+  });
+}
+
+test('powershell audit does not suppress execution flags after double dash', () => {
+  assertDanger('pwsh', ['--', '-command', 'synthetic']);
+});
+
+test('cmd audit does not suppress command flags after double dash', () => {
+  assertDanger('cmd.exe', ['--', '/c', 'dir']);
+});
+
+test('find audit does not suppress execution predicates after double dash', () => {
+  assertDanger('find', ['--', '-exec', 'sh', '{}', ';']);
+});
+
+for (const args of [
+  ['-O', 'https://example.invalid/file'],
+  ['-J', '-O', 'https://example.invalid/file'],
+  ['--remote-name', 'https://example.invalid/file'],
+  ['--output-dir', 'out', 'https://example.invalid/file'],
+  ['--dump-header', 'headers', 'https://example.invalid/file'],
+  ['--trace-ascii', 'trace', 'https://example.invalid/file'],
+  ['--cookie-jar', 'cookies', 'https://example.invalid/file']
+]) {
+  test('curl audit detects additional file output risk ' + args[0], () => {
+    assertDanger('curl', args);
+  });
+}
+
+test('ssh audit detects Match exec through option values without echoing the command', () => {
+  const findings = assertDanger('ssh', ['-o', 'Match exec=synthetic-command']);
+  assert.equal(JSON.stringify(findings).includes('synthetic-command'), false);
+});

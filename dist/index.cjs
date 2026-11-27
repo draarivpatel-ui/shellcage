@@ -27,6 +27,8 @@ const CODES = Object.freeze({
   EXECUTABLE_CONTROL_CHAR: 'SHELLCAGE_EXECUTABLE_CONTROL_CHAR',
   EXECUTABLE_WHITESPACE: 'SHELLCAGE_EXECUTABLE_WHITESPACE',
   EXECUTABLE_NON_ASCII: 'SHELLCAGE_EXECUTABLE_NON_ASCII',
+  EXECUTABLE_TRAILING_DOT: 'SHELLCAGE_EXECUTABLE_TRAILING_DOT',
+  EXECUTABLE_NTFS_STREAM: 'SHELLCAGE_EXECUTABLE_NTFS_STREAM',
   EXECUTABLE_TRAVERSAL: 'SHELLCAGE_EXECUTABLE_TRAVERSAL',
   EXECUTABLE_RELATIVE_PATH: 'SHELLCAGE_EXECUTABLE_RELATIVE_PATH',
   EXECUTABLE_NOT_ALLOWLISTED: 'SHELLCAGE_EXECUTABLE_NOT_ALLOWLISTED',
@@ -112,13 +114,18 @@ const POWERSHELL_EXECUTABLES = new Set(['powershell', 'pwsh']);
 
 const EXACT_DANGEROUS_ENV_NAMES = new Set([
   'LD_PRELOAD', 'LD_LIBRARY_PATH', 'LD_AUDIT', 'LD_DEBUG',
-  'NODE_OPTIONS', 'NODE_EXTRA_CA_CERTS', 'NODE_PATH',
+  'NODE_OPTIONS', 'NODE_EXTRA_CA_CERTS', 'NODE_PATH', 'NODE_REPL_EXTERNAL_MODULE',
   'PYTHONPATH', 'PYTHONSTARTUP', 'PYTHONHOME', 'PYTHONINSPECT', 'PYTHONEXECUTABLE',
+  'PYTHONUSERBASE', 'PYTHONBREAKPOINT',
   'RUBYOPT', 'RUBYLIB', 'PERL5OPT', 'PERL5LIB',
   'JAVA_TOOL_OPTIONS', '_JAVA_OPTIONS', 'JDK_JAVA_OPTIONS',
   'BASH_ENV', 'ENV', 'CDPATH', 'IFS', 'SHELLOPTS', 'PS4', 'PROMPT_COMMAND', 'ZDOTDIR',
   'GIT_SSH', 'GIT_SSH_COMMAND', 'GIT_EXEC_PATH', 'GIT_CONFIG_PARAMETERS',
-  'GIT_CONFIG_COUNT', 'GIT_EXT_TRANSPORT', 'GIT_EXTERNAL_DIFF', 'GIT_PAGER',
+  'GIT_CONFIG_COUNT', 'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_SYSTEM',
+  'GIT_EXT_TRANSPORT', 'GIT_EXTERNAL_DIFF', 'GIT_PAGER',
+  'GIT_EDITOR', 'GIT_SEQUENCE_EDITOR', 'GIT_ASKPASS', 'SSH_ASKPASS', 'GIT_PROXY_COMMAND',
+  'GIT_DIR', 'GIT_WORK_TREE', 'GIT_TEMPLATE_DIR',
+  'SSLKEYLOGFILE', 'DOTNET_STARTUP_HOOKS',
   'EDITOR', 'VISUAL', 'PAGER', 'COMSPEC', 'PATHEXT',
   'INPUTRC', 'TERMINFO', 'TERMINFO_DIRS', 'LESSOPEN', 'LESSCLOSE', 'SYSTEMD_PAGER'
 ]);
@@ -143,6 +150,12 @@ const ARG_OPTION_KEYS = new Set([
 const ENV_OPTION_KEYS = new Set([
   'allowEnv', 'maxValueBytes', 'includeUnlisted'
 ]);
+
+function copyOwnProperties(value) {
+  const copy = Object.create(null);
+  for (const key of Object.keys(value)) copy[key] = value[key];
+  return copy;
+}
 
 function isPlainObject(value) {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
@@ -236,20 +249,21 @@ function assertOnlyKeys(options, allowed, label) {
 }
 
 function normalizeInvocationOptions(options) {
-  const source = options === undefined ? {} : options;
-  assertPlainObject(source, 'options');
-  assertOnlyKeys(source, INVOCATION_OPTION_KEYS, 'options');
+  const input = options === undefined ? {} : options;
+  assertPlainObject(input, 'options');
+  assertOnlyKeys(input, INVOCATION_OPTION_KEYS, 'options');
+  const source = copyOwnProperties(input);
   if (source.shell === true || source.windowsVerbatimArguments === true) {
     fail(CODES.SHELL_OPTION_FORBIDDEN, 'shell execution and verbatim Windows arguments are forbidden');
   }
-  const normalized = {
+  const normalized = Object.assign(Object.create(null), {
     allowShellBinary: booleanValue(source.allowShellBinary, false, 'allowShellBinary'),
     allowBatchExtensions: booleanValue(source.allowBatchExtensions, false, 'allowBatchExtensions'),
     allowDangerousFlags: booleanValue(source.allowDangerousFlags, false, 'allowDangerousFlags'),
     maxArgBytes: integerValue(source.maxArgBytes, DEFAULT_MAX_ARG_BYTES, 1, MAX_ARG_BYTES, 'maxArgBytes', CODES.CONFIG_INVALID),
     maxArgs: integerValue(source.maxArgs, DEFAULT_MAX_ARGS, 1, MAX_ARGS_LIMIT, 'maxArgs', CODES.CONFIG_INVALID),
     maxArgvBytes: integerValue(source.maxArgvBytes, DEFAULT_MAX_ARGV_BYTES, 1, MAX_ARGV_BYTES_LIMIT, 'maxArgvBytes', CODES.CONFIG_INVALID)
-  };
+  });
   if (source.allowExecutables !== undefined) normalized.allowExecutables = source.allowExecutables;
   if (source.env !== undefined) normalized.env = source.env;
   if (source.allowEnv !== undefined) normalized.allowEnv = source.allowEnv;
@@ -284,8 +298,12 @@ function isAbsoluteExecutable(value) {
   return path.isAbsolute(text) || WINDOWS_ABSOLUTE_RE.test(text) || text.startsWith('\\\\');
 }
 
+function windowsPolicyBasename(name) {
+  return String(name).split(':')[0].replace(/[. ]+$/, '');
+}
+
 function canonicalExecutableName(name) {
-  let lower = String(name).toLowerCase();
+  let lower = windowsPolicyBasename(name).toLowerCase();
   if (lower.endsWith('.exe')) lower = lower.slice(0, -4);
   return lower;
 }
@@ -334,6 +352,14 @@ function inspectExecutableSyntax(command, findings) {
     valid = false;
     findings.push(makeFinding(CODES.EXECUTABLE_NON_ASCII, 'high', 'executable basename must not contain non-ASCII confusables'));
   }
+  if (basename.endsWith('.')) {
+    valid = false;
+    findings.push(makeFinding(CODES.EXECUTABLE_TRAILING_DOT, 'high', 'executable basename must not end in a dot because Windows can normalize it away'));
+  }
+  if (basename.includes(':')) {
+    valid = false;
+    findings.push(makeFinding(CODES.EXECUTABLE_NTFS_STREAM, 'high', 'executable basename must not contain an NTFS alternate data stream separator'));
+  }
   if (splitExecutablePath(command).includes('..')) {
     valid = false;
     findings.push(makeFinding(CODES.EXECUTABLE_TRAVERSAL, 'high', 'executable path must not contain parent traversal'));
@@ -353,7 +379,7 @@ function validateAllowlistEntry(entry, index) {
     fail(CODES.EXECUTABLE_ALLOWLIST_INVALID, 'allowlist entry contains forbidden characters', { index });
   }
   const base = executableBasename(entry);
-  if (base.length === 0 || WHITESPACE_RE.test(base) || NON_ASCII_RE.test(base)) {
+  if (base.length === 0 || WHITESPACE_RE.test(base) || NON_ASCII_RE.test(base) || base.endsWith('.') || base.includes(':')) {
     fail(CODES.EXECUTABLE_ALLOWLIST_INVALID, 'allowlist entry has an unsafe executable basename', { index });
   }
   if (splitExecutablePath(entry).includes('..')) {
@@ -418,11 +444,20 @@ function executableIsAllowlisted(command, info, allowlist) {
 
 function inspectExecutablePolicy(command, info, options, findings) {
   if (!info.basename) return;
-  const canonical = canonicalExecutableName(info.basename);
-  if (SHELL_EXECUTABLES.has(canonical) && options.allowShellBinary !== true) {
+  const policyNames = new Set([windowsPolicyBasename(info.basename)]);
+  if (info.absolute) {
+    policyNames.add(windowsPolicyBasename(executableBasename(realpathIfPossible(command))));
+  }
+  let shellBinary = false;
+  let batchExtension = false;
+  for (const basename of policyNames) {
+    if (SHELL_EXECUTABLES.has(canonicalExecutableName(basename))) shellBinary = true;
+    if (BATCH_EXTENSION_RE.test(basename)) batchExtension = true;
+  }
+  if (shellBinary && options.allowShellBinary !== true) {
     findings.push(makeFinding(CODES.SHELL_BINARY, 'critical', 'shell and script interpreter executables are blocked by default'));
   }
-  if (BATCH_EXTENSION_RE.test(info.basename) && options.allowBatchExtensions !== true) {
+  if (batchExtension && options.allowBatchExtensions !== true) {
     findings.push(makeFinding(CODES.BATCH_EXTENSION, 'critical', 'Windows batch and script executable extensions are blocked by default'));
   }
   if (options.allowExecutables !== undefined) {
@@ -464,9 +499,10 @@ function checkSafeArg(value, options = {}) {
 }
 
 function assertSafeArg(value, options = {}) {
-  const source = options === undefined ? {} : options;
-  assertPlainObject(source, 'argument options');
-  assertOnlyKeys(source, ARG_OPTION_KEYS, 'argument options');
+  const input = options === undefined ? {} : options;
+  assertPlainObject(input, 'argument options');
+  assertOnlyKeys(input, ARG_OPTION_KEYS, 'argument options');
+  const source = copyOwnProperties(input);
   const problem = checkSafeArg(value, source);
   if (problem) fail(problem.code, problem.message);
   return value;
@@ -533,6 +569,29 @@ function shortClusterIncludes(raw, letter) {
   return raw.startsWith('-') && !raw.startsWith('--') && raw.length > 2 && raw.slice(1).includes(letter);
 }
 
+function longOptionToken(raw) {
+  return String(raw).toLowerCase().split('=', 1)[0];
+}
+
+function longFlagOrAbbreviation(raw, flag) {
+  const token = longOptionToken(raw);
+  return token.length >= 3 && String(flag).startsWith(token);
+}
+
+function powerShellOptionToken(raw) {
+  let token = String(raw).toLowerCase();
+  if (/^[\u2010-\u2015\u2212]/.test(token)) token = '-' + token.slice(1);
+  if (token.startsWith('/')) token = '-' + token.slice(1);
+  return token;
+}
+
+function powerShellExecutionToken(raw) {
+  const token = powerShellOptionToken(raw);
+  if (token === '-c' || token === '-e' || token === '-cwa') return true;
+  if (token.length < 3) return false;
+  return ['-command', '-encodedcommand', '-commandwithargs'].some((flag) => flag.startsWith(token));
+}
+
 function addDanger(findings, severity, message, index, flag) {
   findings.push(makeFinding(CODES.DANGEROUS_FLAG, severity, message, { index, flag }));
 }
@@ -544,9 +603,10 @@ function canonicalToolName(command) {
 function auditDangerousArgv(command, args, findings) {
   if (!Array.isArray(args) || args.some((arg) => typeof arg !== 'string')) return;
   const tool = canonicalToolName(command);
-  const endIndex = firstEndOfOptions(args);
   const isPowerShell = POWERSHELL_EXECUTABLES.has(tool);
   const isShell = SHELL_EXECUTABLES.has(tool);
+  const honorsEndOfOptions = tool !== 'find' && tool !== 'cmd' && !isPowerShell;
+  const endIndex = honorsEndOfOptions ? firstEndOfOptions(args) : -1;
 
   for (let index = 0; index < args.length; index += 1) {
     const raw = args[index];
@@ -561,7 +621,7 @@ function auditDangerousArgv(command, args, findings) {
 
     if (isShell) {
       if ((tool === 'cmd' && (lower === '/c' || lower === '/k')) ||
-          (isPowerShell && ['-c', '-command', '-enc', '-encodedcommand', '-e'].includes(lower)) ||
+          (isPowerShell && powerShellExecutionToken(raw)) ||
           (!isPowerShell && tool !== 'cmd' && raw === '-c')) {
         addDanger(findings, 'critical', 'shell interpreter command execution flag detected', index, raw);
         continue;
@@ -571,23 +631,36 @@ function auditDangerousArgv(command, args, findings) {
     if (tool === 'git') {
       if (raw === '-c' || shortFlag(raw, '-c')) {
         addDanger(findings, 'critical', 'git -c can redefine configuration and execution behavior', index, '-c');
-      } else if (longFlag(raw, '--config-env')) {
+      } else if (raw === '-C' || shortFlag(raw, '-C')) {
+        addDanger(findings, 'high', 'git -C changes the working directory used for repository and path resolution', index, '-C');
+      } else if (longFlagOrAbbreviation(raw, '--config-env')) {
         addDanger(findings, 'critical', 'git --config-env can import attacker controlled configuration', index, '--config-env');
-      } else if (longFlag(raw, '--upload-pack')) {
+      } else if (longFlagOrAbbreviation(raw, '--config')) {
+        addDanger(findings, 'critical', 'git --config can redefine configuration and execution behavior', index, '--config');
+      } else if (longFlagOrAbbreviation(raw, '--upload-pack')) {
         addDanger(findings, 'critical', 'git --upload-pack can execute an arbitrary helper', index, '--upload-pack');
-      } else if (longFlag(raw, '--exec-path')) {
+      } else if (longFlagOrAbbreviation(raw, '--exec-path')) {
         addDanger(findings, 'high', 'git --exec-path changes where git resolves helper programs', index, '--exec-path');
+      } else if (longFlagOrAbbreviation(raw, '--git-dir')) {
+        addDanger(findings, 'high', 'git --git-dir can select an attacker controlled repository configuration or hooks', index, '--git-dir');
+      } else if (longFlagOrAbbreviation(raw, '--work-tree')) {
+        addDanger(findings, 'high', 'git --work-tree changes where repository content is read or written', index, '--work-tree');
+      } else if (longFlagOrAbbreviation(raw, '--template')) {
+        addDanger(findings, 'high', 'git --template can install attacker controlled hooks or configuration', index, '--template');
       }
     }
 
     if (tool === 'tar') {
-      if (longFlag(raw, '--checkpoint-action')) {
+      const optionToken = longOptionToken(raw);
+      if (longFlagOrAbbreviation(raw, '--checkpoint-action') && optionToken !== '--checkpoint') {
         addDanger(findings, 'critical', 'tar --checkpoint-action can execute commands while extracting', index, '--checkpoint-action');
-      } else if (longFlag(raw, '--to-command')) {
+      } else if (longFlagOrAbbreviation(raw, '--to-command')) {
         addDanger(findings, 'critical', 'tar --to-command pipes archive members into a command', index, '--to-command');
-      } else if (shortFlag(raw, '-I') || shortClusterIncludes(raw, 'I') || longFlag(raw, '--use-compress-program')) {
+      } else if (shortFlag(raw, '-I') || shortClusterIncludes(raw, 'I') || longFlagOrAbbreviation(raw, '--use-compress-program')) {
         addDanger(findings, 'critical', 'tar compression helper flags can execute arbitrary commands', index, raw.includes('I') ? '-I' : '--use-compress-program');
-      } else if (longFlag(raw, '--rsh-command') || longFlag(raw, '--info-script') || shortFlag(raw, '-F') || shortClusterIncludes(raw, 'F')) {
+      } else if (longFlagOrAbbreviation(raw, '--rsh-command') || longFlagOrAbbreviation(raw, '--rmt-command') ||
+                 longFlagOrAbbreviation(raw, '--info-script') || longFlagOrAbbreviation(raw, '--new-volume-script') ||
+                 shortFlag(raw, '-F') || shortClusterIncludes(raw, 'F')) {
         addDanger(findings, 'critical', 'tar helper command flag detected', index, raw);
       }
     }
@@ -605,13 +678,18 @@ function auditDangerousArgv(command, args, findings) {
         addDanger(findings, 'high', 'curl output flags can overwrite attacker selected files', index, raw.includes('o') ? '-o' : '--output');
       } else if (shortFlag(raw, '-T') || shortClusterIncludes(raw, 'T') || longFlag(raw, '--upload-file')) {
         addDanger(findings, 'high', 'curl upload flags can read attacker selected files', index, raw.startsWith('-T') ? '-T' : '--upload-file');
+      } else if (shortFlag(raw, '-O') || shortClusterIncludes(raw, 'O') || shortFlag(raw, '-J') || shortClusterIncludes(raw, 'J') ||
+                 longFlag(raw, '--remote-name') || longFlag(raw, '--remote-header-name') || longFlag(raw, '--output-dir') ||
+                 longFlag(raw, '--dump-header') || longFlag(raw, '--trace') || longFlag(raw, '--trace-ascii') ||
+                 longFlag(raw, '--stderr') || longFlag(raw, '--cookie-jar')) {
+        addDanger(findings, 'high', 'curl file output flags can write attacker selected files', index, raw);
       }
     }
 
     if (['ssh', 'scp', 'sftp', 'rsync'].includes(tool)) {
       const next = index + 1 < args.length ? args[index + 1].toLowerCase() : '';
-      const proxyInNext = next.includes('proxycommand') || next.includes('permitlocalcommand') || next.includes('localcommand');
-      const proxyInRaw = lower.includes('proxycommand') || lower.includes('permitlocalcommand') || lower.includes('localcommand');
+      const proxyInNext = next.includes('proxycommand') || next.includes('permitlocalcommand') || next.includes('localcommand') || (next.includes('match') && next.includes('exec'));
+      const proxyInRaw = lower.includes('proxycommand') || lower.includes('permitlocalcommand') || lower.includes('localcommand') || (lower.includes('match') && lower.includes('exec'));
       if (raw === '-o' && proxyInNext) {
         addDanger(findings, 'critical', 'ssh option can execute a local proxy command', index, '-o');
       } else if (shortFlag(raw, '-o') && proxyInRaw) {
@@ -680,14 +758,14 @@ function collectInvocationFindings(command, args, options, requireAllowlist, aud
     }
   } catch (error) {
     findings.push(errorFinding(error));
-    normalized = {
+    normalized = Object.assign(Object.create(null), {
       allowShellBinary: false,
       allowBatchExtensions: false,
       allowDangerousFlags: false,
       maxArgBytes: DEFAULT_MAX_ARG_BYTES,
       maxArgs: DEFAULT_MAX_ARGS,
       maxArgvBytes: DEFAULT_MAX_ARGV_BYTES
-    };
+    });
   }
 
   const executableInfo = inspectExecutableSyntax(command, findings);
@@ -735,12 +813,14 @@ const SLOT_KEYS = Object.freeze({
 
 function assertArgvSlotObject(slot, index) {
   if (!isPlainObject(slot)) fail(CODES.ARGV_SPEC_INVALID, 'argv builder slots must be plain objects', { index });
-  if (typeof slot.type !== 'string') fail(CODES.ARGV_SPEC_INVALID, 'argv builder slot requires a type', { index });
-  const allowed = SLOT_KEYS[slot.type];
-  if (!allowed) return;
-  for (const key of Object.keys(slot)) {
+  const copy = copyOwnProperties(slot);
+  if (typeof copy.type !== 'string') fail(CODES.ARGV_SPEC_INVALID, 'argv builder slot requires a type', { index });
+  const allowed = SLOT_KEYS[copy.type];
+  if (!allowed) return copy;
+  for (const key of Object.keys(copy)) {
     if (!allowed.has(key)) fail(CODES.ARGV_SPEC_INVALID, 'argv builder slot contains an unknown key', { index, key });
   }
+  return copy;
 }
 
 function validateFlagName(name, index) {
@@ -756,8 +836,7 @@ function buildArgv(spec) {
   let seenEnd = false;
 
   for (let index = 0; index < spec.length; index += 1) {
-    const slot = spec[index];
-    assertArgvSlotObject(slot, index);
+    const slot = assertArgvSlotObject(spec[index], index);
     if (slot.type === 'endOfOptions') {
       if (seenEnd) fail(CODES.ARGV_SPEC_INVALID, 'argv builder accepts only one end-of-options marker', { index });
       seenEnd = true;
@@ -845,9 +924,10 @@ function validateEnvKeyShape(key) {
 }
 
 function normalizeEnvOptions(options) {
-  const source = options === undefined ? {} : options;
-  assertPlainObject(source, 'environment options');
-  assertOnlyKeys(source, ENV_OPTION_KEYS, 'environment options');
+  const input = options === undefined ? {} : options;
+  assertPlainObject(input, 'environment options');
+  assertOnlyKeys(input, ENV_OPTION_KEYS, 'environment options');
+  const source = copyOwnProperties(input);
   const normalized = {
     maxValueBytes: integerValue(source.maxValueBytes, DEFAULT_MAX_ENV_VALUE_BYTES, 1, MAX_ENV_VALUE_BYTES_LIMIT, 'maxValueBytes', CODES.CONFIG_INVALID),
     includeUnlisted: booleanValue(source.includeUnlisted, false, 'includeUnlisted')
@@ -1049,6 +1129,29 @@ function terminateChild(child, signal) {
   }
 }
 
+function incompleteUtf8SuffixLength(buffer) {
+  const length = buffer.length;
+  for (let index = length - 1; index >= 0 && length - index <= 4; index -= 1) {
+    const byte = buffer[index];
+    if ((byte & 0xC0) === 0x80) continue;
+    if ((byte & 0x80) === 0) return 0;
+    let needed = 0;
+    if ((byte & 0xE0) === 0xC0) needed = 2;
+    else if ((byte & 0xF0) === 0xE0) needed = 3;
+    else if ((byte & 0xF8) === 0xF0) needed = 4;
+    else return 0;
+    return length - index < needed ? length - index : 0;
+  }
+  return 0;
+}
+
+function decodeCapturedUtf8(chunks, truncated) {
+  const buffer = Buffer.concat(chunks);
+  if (!truncated) return buffer.toString('utf8');
+  const incomplete = incompleteUtf8SuffixLength(buffer);
+  return buffer.subarray(0, buffer.length - incomplete).toString('utf8');
+}
+
 function collectChildResult(child, command, options, startedAt) {
   return new Promise((resolve, reject) => {
     const stdoutChunks = [];
@@ -1138,8 +1241,8 @@ function collectChildResult(child, command, options, startedAt) {
         command,
         exitCode,
         signal,
-        stdout: Buffer.concat(stdoutChunks).toString('utf8'),
-        stderr: Buffer.concat(stderrChunks).toString('utf8'),
+        stdout: decodeCapturedUtf8(stdoutChunks, truncatedStdout),
+        stderr: decodeCapturedUtf8(stderrChunks, truncatedStderr),
         timedOut,
         truncatedStdout,
         truncatedStderr,
@@ -1191,11 +1294,17 @@ function safeSpawn(command, args = [], options = {}) {
     child.stdin.end();
   }
   if (normalized.timeoutMs !== undefined) {
+    let forceKillTimer = null;
     const timer = setTimeout(() => {
       terminateChild(child, normalized.killSignal || 'SIGTERM');
+      forceKillTimer = setTimeout(() => terminateChild(child, 'SIGKILL'), KILL_GRACE_MS);
+      if (typeof forceKillTimer.unref === 'function') forceKillTimer.unref();
     }, normalized.timeoutMs);
     if (typeof timer.unref === 'function') timer.unref();
-    child.once('close', () => clearTimeout(timer));
+    child.once('close', () => {
+      clearTimeout(timer);
+      if (forceKillTimer !== null) clearTimeout(forceKillTimer);
+    });
   }
   return child;
 }

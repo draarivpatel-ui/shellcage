@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { runCli, makeTempDir } from './helpers.mjs';
+import { runCli, runProcess, makeTempDir } from './helpers.mjs';
 
 function writeJson(t, value, name = 'env.json') {
   const directory = makeTempDir(t);
@@ -242,4 +242,27 @@ test('CLI audit-env invalid key does not echo control characters', async (t) => 
   const result = await runCli(['audit-env', '--json', '--env-json', file]);
   assert.equal(result.exitCode, 1);
   assert.equal(result.stdout.includes('BAD\nKEY'), false);
+});
+
+test('CLI audit neutralizes bidirectional controls in command output', async () => {
+  const result = await runCli(['audit', '--', 'bad\u202ename']);
+  assert.equal(result.exitCode, 1);
+  assert.equal(result.stdout.includes('bad\u202ename'), false);
+  assert.ok(result.stdout.includes('\\u202e'));
+});
+
+test('CLI audit JSON neutralizes bidirectional controls in finding metadata', async () => {
+  const result = await runCli(['audit', '--json', '--', 'pwsh', ['-', '-c', 'x'].join('')]);
+  assert.equal(result.exitCode, 1);
+  assert.equal(result.stdout.includes('\u202e'), false);
+});
+
+test('CLI audit-env rejects a FIFO input', async (t) => {
+  if (process.platform === 'win32') t.skip('FIFOs are unavailable on Windows');
+  const directory = makeTempDir(t);
+  const fifo = path.join(directory, 'env-fifo');
+  const mkfifo = await runProcess('mkfifo', [fifo]);
+  assert.equal(mkfifo.exitCode, 0);
+  const result = await runCli(['audit-env', '--env-json', fifo]);
+  assert.equal(result.exitCode, 2);
 });

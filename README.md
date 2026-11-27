@@ -6,7 +6,7 @@ Zero-dependency command injection, argument injection and environment hijack def
 
 `shellcage` is a small, auditable security library for applications that must execute local programs without turning attacker controlled input into a shell command. It is designed for MCP servers, automation workers, CI helpers, backend job runners and desktop agents that use `child_process` but must enforce a strict boundary around executable selection, argv construction, environment inheritance, working-directory containment, timeouts and output size.
 
-- **Zero dependencies.** Only Node.js core modules are used.
+- **Zero runtime dependencies.** Only Node.js core modules are used by the published library.
 - **No shell execution.** String command lines are rejected, `shell: false` is forced, and `windowsVerbatimArguments` is forbidden.
 - **Explicit executable allowlist.** Commands are matched by basename or resolved absolute path. Shell interpreters and Windows batch or script extensions are blocked by default, including trailing-dot and NTFS alternate-data-stream spellings. Resolved absolute-path symlink targets are checked as well as the invoked basename.
 - **CWE-88 positional argument defense.** Typed argv builder slots place untrusted values after `--` or validate them as non-flag positionals.

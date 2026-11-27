@@ -132,10 +132,13 @@ test('package bin entry points at executable CLI file without leading dot slash'
   assert.match(cli, /^#!\/usr\/bin\/env node/);
 });
 
-test('package dependencies and devDependencies are empty', () => {
+test('package keeps runtime dependencies empty and confines fuzzing to development use', () => {
   const pkg = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
   assert.deepEqual(pkg.dependencies, {});
-  assert.deepEqual(pkg.devDependencies, {});
+  assert.deepEqual(Object.keys(pkg.devDependencies), ['fast-check']);
+  assert.equal(typeof pkg.devDependencies['fast-check'], 'string');
+  assert.equal(pkg.devDependencies['fast-check'].startsWith('^'), false);
+  assert.equal(pkg.devDependencies['fast-check'].startsWith('~'), false);
 });
 
 test('package test script uses the explicit Windows-safe test runner', () => {

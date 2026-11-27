@@ -2,7 +2,7 @@
 
 ## Report a vulnerability
 
-Please report suspected vulnerabilities privately through the repository owner's GitHub private vulnerability reporting flow when available. If private reporting is not enabled, open a minimal public issue that asks for a private contact channel and do not include exploit details.
+Please report suspected vulnerabilities privately through the repository's [GitHub Security Advisory form](https://github.com/draarivpatel-ui/shellcage/security/advisories/new). Do not open a public issue, pull request or discussion with exploit details.
 
 Never include a real token, cookie, private key, victim hostname, proprietary path or secret-bearing environment dump in a report. Use synthetic values and redacted transcripts.
 
@@ -40,4 +40,7 @@ Critical and high severity generally requires a default-configuration bypass wit
 
 ## Coordinated disclosure
 
-Please allow maintainers reasonable time to reproduce, patch and release before public disclosure. Exact timelines depend on severity and exploitability, but reporters can expect an acknowledgement goal of 7 days and a remediation plan goal of 30 days for valid high-impact reports.
+- Acknowledgment: within 48 hours.
+- Initial assessment: within 7 calendar days.
+- Fix or mitigation plan: within 30 calendar days for confirmed high-impact reports.
+- Coordinated public disclosure: up to 90 days by default, adjusted by mutual agreement when exploitation or user risk requires a different date.

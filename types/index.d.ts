@@ -200,7 +200,7 @@ export type ArgvSlot =
 export declare function validateInvocation(
   command: string,
   args?: readonly string[],
-  options: RequiredInvocationOptions
+  options?: InvocationOptions
 ): ValidateInvocationResult;
 
 export declare function auditArgv(

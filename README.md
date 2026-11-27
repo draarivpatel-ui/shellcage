@@ -303,7 +303,7 @@ Denylist entries win even when a caller explicitly puts the same name in `allowE
 
 Returns findings for dangerous, invalid, duplicate, oversized or non-string environment entries without printing values. This function never includes an environment value in a finding. Pass `includeUnlisted: true` to add informational findings for names outside the allowlist.
 
-### `safeExecFile(command, args?, options?)`
+### `safeExecFile(command, args?, options)`
 
 Validates the invocation, scrubs the environment, validates `cwd`, and executes with `shell: false`. It returns a frozen result:
 
@@ -336,7 +336,7 @@ Stdout and stderr caps are streaming caps. If a child exceeds a cap, shellcage s
 
 `timeoutMs` uses `SIGTERM` by default and escalates to `SIGKILL` after a short grace period. `killSignal` may be one of `SIGTERM`, `SIGKILL`, `SIGINT`, `SIGHUP` or `SIGQUIT`.
 
-### `safeSpawn(command, args?, options?)`
+### `safeSpawn(command, args?, options)`
 
 Applies the same executable, argv, environment and `cwd` validation, then returns the child process object. It is intended for callers that genuinely need streaming control. Output byte caps are only enforced by `safeExecFile`; a `safeSpawn` caller owns the streams and must bound them. Supplying `maxStdoutBytes` or `maxStderrBytes` to `safeSpawn` is rejected rather than silently ignored. If `timeoutMs` is supplied, the timeout is enforced.
 

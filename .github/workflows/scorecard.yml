@@ -3,23 +3,23 @@ name: Scorecard
 on:
   push:
     branches: [main]
-  branch_protection_rule:
   schedule:
     - cron: '30 5 * * 2'
+  workflow_dispatch:
 
-permissions: read-all
+permissions: {}
 
 jobs:
   analysis:
     name: Scorecard analysis
     runs-on: ubuntu-24.04
     permissions:
-      security-events: write
-      id-token: write
       contents: read
       actions: read
       issues: read
       pull-requests: read
+      security-events: write
+      id-token: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0

@@ -1,0 +1,62 @@
+{
+  "name": "shellcage",
+  "version": "1.0.0",
+  "description": "Zero-dependency command injection, argument injection and environment hijack defense for Node.js child processes",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/draarivpatel-ui/shellcage.git"
+  },
+  "homepage": "https://github.com/draarivpatel-ui/shellcage#readme",
+  "bugs": {
+    "url": "https://github.com/draarivpatel-ui/shellcage/issues"
+  },
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./src/index.mjs",
+  "types": "./types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./types/index.d.ts",
+      "import": "./src/index.mjs",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "bin": {
+    "shellcage": "bin/shellcage.mjs"
+  },
+  "files": [
+    "bin",
+    "src",
+    "dist",
+    "types",
+    "docs",
+    "README.md",
+    "SECURITY.md",
+    "CONTRIBUTING.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "build:cjs": "node scripts/build-cjs.mjs",
+    "check:cjs": "node scripts/build-cjs.mjs --check"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "security",
+    "command-injection",
+    "argument-injection",
+    "cwe-78",
+    "cwe-88",
+    "cve-2024-27980",
+    "child-process",
+    "mcp",
+    "environment",
+    "zero-dependency"
+  ],
+  "license": "MIT",
+  "sideEffects": false,
+  "dependencies": {},
+  "devDependencies": {}
+}
